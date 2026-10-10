@@ -1,4 +1,3 @@
-/* eslint-disable @repo/no-null-render */
 import { CodeMirrorEditor } from "@/src/components/editor";
 import { TablePeekViewTraceDetail } from "@/src/components/table/peek/peek-trace-detail";
 import { usePeekNavigation } from "@/src/components/table/peek/hooks/usePeekNavigation";
@@ -12,8 +11,8 @@ import {
   usePreviewData,
 } from "@/src/features/evals/hooks/usePreviewData";
 import { useFirstEvalPreviewPointer } from "@/src/features/evals/hooks/useEvalPreviewNavigation";
-import { useReadPath } from "@/src/features/events/hooks/useReadPath";
-import { detailPageListKeys } from "@/src/features/navigate-detail-pages/context";
+import { useReadPath } from "@/src/features/events";
+import { detailPageListKeys } from "@/src/features/navigate-detail-pages";
 import { api, type RouterOutputs } from "@/src/utils/api";
 import {
   deepParseJson,
@@ -27,10 +26,6 @@ import { useMemo } from "react";
 import { toast } from "sonner";
 
 import { type EvalFormType } from "@/src/features/evals/utils/evaluator-form-utils";
-import {
-  isEventTarget,
-  isExperimentTarget,
-} from "@/src/features/evals/utils/typeHelpers";
 
 type CodeEvalTestRunResult =
   | RouterOutputs["evals"]["testRunCodeEval"]
@@ -44,32 +39,20 @@ type CodeEvalInputPreviewData = Extract<
   { type: typeof EvalTargetObject.EVENT }
 >;
 
-function isCodeEvalTestTarget(
-  target: EvalFormType["target"],
-): target is
-  | typeof EvalTargetObject.EVENT
-  | typeof EvalTargetObject.EXPERIMENT {
-  return isEventTarget(target) || isExperimentTarget(target);
-}
-
 export function CodeEvalTestRunCard({
   projectId,
   evalTemplate,
   target,
   scoreName,
-  disabled = false,
   enableExecutionTracePeek = true,
 }: {
   projectId: string;
   evalTemplate: EvalTemplate;
-  target: EvalFormType["target"];
+  target: typeof EvalTargetObject.EVENT | typeof EvalTargetObject.EXPERIMENT;
   scoreName: EvalFormType["scoreName"];
-  disabled?: boolean;
   enableExecutionTracePeek?: boolean;
 }) {
   const { isV4 } = useReadPath();
-  const isSupportedTarget = isCodeEvalTestTarget(target);
-  const canPreview = isSupportedTarget && !disabled;
   const previewPointer = useFirstEvalPreviewPointer({
     target,
     useEventsTable: isV4,
@@ -96,7 +79,7 @@ export function CodeEvalTestRunCard({
 
   const { previewData, isLoading } = usePreviewData({
     projectId,
-    enabled: canPreview && Boolean(previewPointer),
+    enabled: Boolean(previewPointer),
     target,
     traceId: previewPointer?.traceId,
     observationId: previewPointer?.observationId,
@@ -117,8 +100,6 @@ export function CodeEvalTestRunCard({
     },
   });
 
-  if (!isSupportedTarget || !canPreview) return null;
-
   return (
     <>
       <Card className="flex min-w-0 flex-col gap-4 p-4">
@@ -135,7 +116,7 @@ export function CodeEvalTestRunCard({
                   rel="noopener noreferrer"
                 >
                   Source code
-                  <ExternalLink className="ml-1 h-3.5 w-3.5" />
+                  <ExternalLink className="icon-base text-icon-foreground ml-1" />
                 </Link>
               </Button>
             ) : (
@@ -145,7 +126,7 @@ export function CodeEvalTestRunCard({
                 title="Only user-managed templates can be edited"
               >
                 Source code
-                <ExternalLink className="ml-1 h-3.5 w-3.5" />
+                <ExternalLink className="icon-base text-icon-foreground ml-1" />
               </Button>
             )}
             <Button
@@ -170,9 +151,9 @@ export function CodeEvalTestRunCard({
               }}
             >
               {testRunMutation.data ? (
-                <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                <RotateCcw className="icon-base text-icon-foreground mr-1.5" />
               ) : (
-                <Play className="mr-1.5 h-3.5 w-3.5" />
+                <Play className="icon-base text-icon-foreground mr-1.5" />
               )}
               Test
             </Button>
@@ -326,7 +307,7 @@ function CodeEvalTestRunResultView({
             size="sm"
             onClick={() => onShowExecutionTrace(result.executionTraceId)}
           >
-            <ListTree className="mr-1.5 h-3.5 w-3.5" />
+            <ListTree className="icon-base text-icon-foreground mr-1.5" />
             Show execution trace
           </Button>
         ) : null}

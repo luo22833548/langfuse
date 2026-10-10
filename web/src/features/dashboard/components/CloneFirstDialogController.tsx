@@ -12,7 +12,7 @@ import {
 import { Button } from "@/src/components/ui/button";
 import { showErrorToast, showSuccessToast } from "@/src/features/notifications";
 import { usePostHogClientCapture } from "@/src/features/posthog-analytics";
-import { type DashboardPlacement } from "@/src/features/widgets/components/DashboardGrid";
+import type { DashboardPlacement } from "@/src/features/widgets";
 
 /**
  * Clone-first flow for Langfuse-managed (read-only) dashboards: any edit
@@ -132,6 +132,7 @@ function CloneFirstDialogContent({
         owner: "LANGFUSE",
       });
       showSuccessToast({
+        operation: "dashboard.clone",
         title: "Editable copy created",
         description: setAsHome
           ? "The copy is now this project's Home dashboard"
@@ -213,7 +214,7 @@ function CloneFirstDialogContent({
                   );
                 }}
               >
-                <ExternalLinkIcon size={14} className="mr-1" />
+                <ExternalLinkIcon className="icon-base text-icon-foreground mr-1" />
                 Open it instead
               </Button>
             </div>

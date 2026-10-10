@@ -15,7 +15,7 @@ import {
 } from "@/src/components/ui/dialog";
 import { ActionButton } from "@/src/components/ActionButton";
 import { usePostHogClientCapture } from "@/src/features/posthog-analytics";
-import { useEntitlementLimit } from "@/src/features/entitlements/hooks";
+import { useEntitlementLimit } from "@/src/features/entitlements";
 import { useState } from "react";
 import {
   Form,
@@ -202,7 +202,7 @@ export const DuplicatePromptButton: React.FC<{
     <Dialog open={hasAccess && open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <ActionButton
-          icon={<Copy className="h-4 w-4" aria-hidden="true" />}
+          icon={<Copy className="icon-base" aria-hidden="true" />}
           hasAccess={hasAccess}
           trackingEventName="prompt_detail:duplicate_button_click"
           variant="outline"

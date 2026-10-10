@@ -1,4 +1,4 @@
-/* eslint-disable @repo/no-abstracted-overlay-trigger, @repo/no-null-render */
+/* eslint-disable @repo/no-abstracted-overlay-trigger */
 import { useState } from "react";
 import { Button } from "@/src/components/ui/button";
 import {
@@ -13,14 +13,11 @@ import {
 } from "@/src/components/ui/dialog";
 import { Input } from "@/src/components/ui/input";
 import { api } from "@/src/utils/api";
+import { showSuccessToast } from "@/src/features/notifications";
 import { toast } from "sonner";
 import { nanoid } from "nanoid";
 
-export const BillingDiscountCodeButton = ({
-  orgId,
-}: {
-  orgId: string | undefined;
-}) => {
+export const BillingDiscountCodeButton = ({ orgId }: { orgId: string }) => {
   const [code, setCode] = useState("");
   const [open, setOpen] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -30,7 +27,11 @@ export const BillingDiscountCodeButton = ({
 
   const mutation = api.cloudBilling.applyPromotionCode.useMutation({
     onSuccess: async () => {
-      toast.success("Promotion code applied");
+      showSuccessToast({
+        operation: "billing_discount.apply",
+        title: "Promotion code applied",
+        description: "",
+      });
       setProcessing(false);
       setOpen(false);
       setCode("");
@@ -45,8 +46,6 @@ export const BillingDiscountCodeButton = ({
       toast.error(err.message || "Failed to apply promotion code");
     },
   });
-
-  if (!orgId) return null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

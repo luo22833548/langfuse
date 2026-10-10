@@ -107,6 +107,7 @@ const nextConfig = {
     "bullmq",
     "@opentelemetry/sdk-node",
     "@opentelemetry/instrumentation-winston",
+    "piscina",
   ],
   poweredByHeader: false,
   basePath: env.NEXT_PUBLIC_BASE_PATH,
@@ -150,6 +151,10 @@ const nextConfig = {
     browserToTerminal: true,
   },
   experimental: {
+    // Ephemeral CI builds can skip writing compiler state they never restore.
+    ...(process.env.NEXT_DISABLE_BUILD_CACHE === "true"
+      ? { turbopackFileSystemCacheForBuild: false }
+      : {}),
     // Use the Rust port instead of the Babel transform
     // turbopackRustReactCompiler: true,
     // Keep `new Worker(new URL(..., import.meta.url))` on the app origin when
@@ -159,6 +164,11 @@ const nextConfig = {
     // imports have to stay same-origin. Empty string is a literal prefix, not
     // a fallback: it emits `/_next/...` on the page origin. Unset (undefined)
     // would inherit assetPrefix and break workers on Cloud.
+    //
+    // No worker is started from a bundler URL any more — same-origin is exactly
+    // what pins those chunks to a host that only serves the current build, so
+    // they 404 in a tab that outlives a deploy. This stays as the guard for
+    // anything that reintroduces one.
     turbopackWorkerAssetPrefix: "",
   },
 
@@ -180,6 +190,10 @@ const nextConfig = {
       "./node_modules/@scalar/api-reference/dist/browser/standalone.js",
       "./third-party-licenses/scalar-api-reference.LICENSE.txt",
     ],
+    // elkjs's prebuilt layout worker, served verbatim so the trace graph's
+    // worker URL keeps resolving across a deploy. See
+    // pages/api/workers/elk-worker.ts.
+    "/api/workers/elk-worker": ["./node_modules/elkjs/lib/elk-worker.min.js"],
   },
 
   async redirects() {

@@ -26,20 +26,25 @@ import { versionUpdateStore } from "@/src/features/version-update/versionUpdateS
 import { type AppRouter } from "@/src/server/api/root";
 import { reportError } from "@/src/utils/reportError";
 import { setUpSuperjson } from "@/src/utils/superjson";
+import { EXPECTED_TRPC_BAD_REQUEST_PATHS } from "@/src/utils/trpcErrorClassification";
 import { trpcErrorToast } from "@/src/utils/trpcErrorToast";
 import { isTrpcZodValidationError } from "@/src/utils/trpcValidationError";
 
 export { isTrpcZodValidationError } from "@/src/utils/trpcValidationError";
+export { EXPECTED_TRPC_BAD_REQUEST_PATHS } from "@/src/utils/trpcErrorClassification";
 
 setUpSuperjson();
 
 const getBaseUrl = () => {
-  const hostname =
-    typeof window !== "undefined"
-      ? window.location.origin
-      : process.env.VERCEL_URL
-        ? `https://${process.env.VERCEL_URL}`
-        : `http://localhost:${process.env.PORT ?? 3000}`;
+  const hostname = (() => {
+    if (typeof window !== "undefined") {
+      return window.location.origin;
+    }
+    if (process.env.VERCEL_URL) {
+      return `https://${process.env.VERCEL_URL}`;
+    }
+    return `http://localhost:${process.env.PORT ?? 3000}`;
+  })();
 
   return `${hostname}${env.NEXT_PUBLIC_BASE_PATH ?? ""}`;
 };
@@ -128,12 +133,14 @@ export const isNetworkConnectivityError = (error: unknown): boolean => {
  * Deliberately narrow: only these codes on an actual `TRPCClientError`, plus
  * Zod input validation (`BAD_REQUEST` whose message is a Zod 4 issue list or
  * whose `data.zodError` is populated), plus CONFLICT on
- * {@link EXPECTED_TRPC_CONFLICT_PATHS}. Empty/too-short fields and stale
- * in-app-agent approvals are the product working as designed — the toast is
- * the UX; Sentry must not log them.
- * A 5xx (`INTERNAL_SERVER_ERROR`), a non-Zod `BAD_REQUEST`, a CONFLICT
- * outside the allowlist, an unrecognized code, or any non-tRPC error is not
- * expected and keeps flowing to Sentry.
+ * {@link EXPECTED_TRPC_CONFLICT_PATHS}, plus BAD_REQUEST on
+ * {@link EXPECTED_TRPC_BAD_REQUEST_PATHS}. Empty/too-short fields, stale
+ * in-app-agent approvals, and a rejected user-configured remote-experiment
+ * URL are the product working as designed — the toast is the UX; Sentry
+ * must not log them.
+ * A 5xx (`INTERNAL_SERVER_ERROR`), a non-Zod `BAD_REQUEST` outside the
+ * allowlist, a CONFLICT outside the allowlist, an unrecognized code, or
+ * any non-tRPC error is not expected and keeps flowing to Sentry.
  */
 export const EXPECTED_TRPC_ERROR_CODES = [
   "NOT_FOUND",
@@ -196,7 +203,8 @@ export const getTrpcErrorFingerprint = (error: unknown): string[] => [
 /**
  * True when `error` is a TRPCClientError whose code is an EXPECTED, user-facing
  * state that should not be captured to Sentry.
- * See {@link EXPECTED_TRPC_ERROR_CODES} and {@link EXPECTED_TRPC_CONFLICT_PATHS}.
+ * See {@link EXPECTED_TRPC_ERROR_CODES}, {@link EXPECTED_TRPC_CONFLICT_PATHS},
+ * and {@link EXPECTED_TRPC_BAD_REQUEST_PATHS}.
  */
 export const isExpectedTrpcClientError = (error: unknown): boolean => {
   const code = getTrpcErrorCode(error);
@@ -211,6 +219,13 @@ export const isExpectedTrpcClientError = (error: unknown): boolean => {
     code === "CONFLICT" &&
     path !== undefined &&
     (EXPECTED_TRPC_CONFLICT_PATHS as readonly string[]).includes(path)
+  ) {
+    return true;
+  }
+  if (
+    code === "BAD_REQUEST" &&
+    path !== undefined &&
+    (EXPECTED_TRPC_BAD_REQUEST_PATHS as readonly string[]).includes(path)
   ) {
     return true;
   }

@@ -10,6 +10,18 @@ import {
 } from "./utils";
 
 describe("parseFlags", () => {
+  it("requires personal Topics opt-in and ignores team and organization defaults", () => {
+    const context = {
+      email: "team.member@langfuse.com",
+      v4BetaEnabled: true,
+    };
+    expect(
+      parseFlagsWithOrganizationDefaults([], ["langfuseTopics"], context)
+        .langfuseTopics,
+    ).toBe(false);
+    expect(parseFlags(["langfuseTopics"], context).langfuseTopics).toBe(true);
+  });
+
   it("enables feature previews by default for Langfuse team members", () => {
     const flags = parseFlags([], {
       email: "team.member@langfuse.com",
@@ -37,6 +49,28 @@ describe("parseFlags", () => {
     expect(flags.modernSession).toBe(false);
   });
 
+  it("enables the gateway flag only for allowlisted organizations", () => {
+    expect(
+      parseFlags([], {
+        email: "user@example.com",
+        v4BetaEnabled: true,
+        aiGatewayEnabled: true,
+      }).aiGateway,
+    ).toBe(true);
+    expect(
+      parseFlags(["aiGateway"], {
+        email: "user@example.com",
+        v4BetaEnabled: true,
+      }).aiGateway,
+    ).toBe(false);
+    expect(
+      parseFlags(["aiGateway"], {
+        email: "team.member@langfuse.com",
+        v4BetaEnabled: true,
+      }).aiGateway,
+    ).toBe(false);
+  });
+
   it("honors a Langfuse team member's explicit opt-out", () => {
     const flags = parseFlags(
       [getFeaturePreviewOptOutFlag("modernSession"), "templateFlag"],
@@ -47,6 +81,7 @@ describe("parseFlags", () => {
     );
 
     expect(flags.modernSession).toBe(false);
+    expect(flags.sessionTimeline).toBe(false);
     // Scoped to its own flag: the opt-out is a STRING match, so a matcher that
     // is too loose would take neighbouring flags down with it. A non-preview
     // flag stands in for that here, which keeps the guard alive no matter how
@@ -66,6 +101,15 @@ describe("parseFlags", () => {
     expect(flags.modernSession).toBe(false);
   });
 
+  it("does not enable Session Timeline without Compact Session", () => {
+    const flags = parseFlags(["sessionTimeline"], {
+      email: "user@example.com",
+      v4BetaEnabled: true,
+    });
+
+    expect(flags.sessionTimeline).toBe(false);
+  });
+
   it("applies organization defaults without overriding a global opt-out", () => {
     const enabled = parseFlagsWithOrganizationDefaults([], ["modernSession"], {
       email: "user@example.com",
@@ -79,6 +123,30 @@ describe("parseFlags", () => {
 
     expect(enabled.modernSession).toBe(true);
     expect(optedOut.modernSession).toBe(false);
+  });
+
+  it("enables organization-only previews exclusively through organization defaults", () => {
+    const personalOnly = parseFlags(["externalMediaStorage"], {
+      email: "user@example.com",
+      v4BetaEnabled: true,
+    });
+    const organizationEnabled = parseFlagsWithOrganizationDefaults(
+      ["feature-preview:externalMediaStorage:disabled"],
+      ["externalMediaStorage"],
+      { email: "user@example.com", v4BetaEnabled: true },
+    );
+
+    expect(personalOnly.externalMediaStorage).toBe(false);
+    expect(organizationEnabled.externalMediaStorage).toBe(true);
+  });
+
+  it("does not apply a Session Timeline organization default without Compact Session", () => {
+    const flags = parseFlagsWithOrganizationDefaults([], ["sessionTimeline"], {
+      email: "user@example.com",
+      v4BetaEnabled: true,
+    });
+
+    expect(flags.sessionTimeline).toBe(false);
   });
 
   it("selects flags from only the active project organization", () => {

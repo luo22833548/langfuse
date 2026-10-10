@@ -1,10 +1,11 @@
+import { testFeatureFlags } from "@/src/__tests__/fixtures/feature-flags";
 import type { Session } from "next-auth";
 import { randomUUID } from "node:crypto";
 
 import { Role, type Plan } from "@langfuse/shared";
 import { prisma } from "@langfuse/shared/src/db";
 import { env } from "@/src/env.mjs";
-import { getFeaturePreviewOptOutFlag } from "@/src/features/feature-flags/utils";
+import { getFeaturePreviewOptOutFlag } from "@/src/features/feature-flags/server";
 import { appRouter } from "@/src/server/api/root";
 import { createInnerTRPCContext } from "@/src/server/api/trpc";
 
@@ -61,6 +62,29 @@ describe("organization feature preview defaults", () => {
     });
   });
 
+  it("enables the Compact Session default with the Session Timeline default", async () => {
+    const { actor, caller, org } = await prepare();
+    await prisma.user.update({
+      where: { id: actor.id },
+      data: { featureFlags: ["modernSession", "sessionTimeline"] },
+    });
+
+    await caller.organizations.setFeatureFlagOrgDefault({
+      orgId: org.id,
+      flag: "sessionTimeline",
+      enabled: true,
+    });
+
+    await expect(
+      prisma.organization.findUniqueOrThrow({
+        where: { id: org.id },
+        select: { featureFlagOrgDefaults: true },
+      }),
+    ).resolves.toEqual({
+      featureFlagOrgDefaults: ["sessionTimeline", "modernSession"],
+    });
+  });
+
   it("allows tested administrators and rejects ordinary organization members", async () => {
     const admin = await prepare("cloud:core", Role.ADMIN);
     await prisma.user.update({
@@ -107,6 +131,21 @@ describe("organization feature preview defaults", () => {
         enabled: true,
       }),
     ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+  });
+
+  it("enables organization-only previews without a personal preview", async () => {
+    const { caller, org } = await prepare();
+
+    await expect(
+      caller.organizations.setFeatureFlagOrgDefault({
+        orgId: org.id,
+        flag: "externalMediaStorage",
+        enabled: true,
+      }),
+    ).resolves.toMatchObject({
+      defaults: ["externalMediaStorage"],
+      enabled: true,
+    });
   });
 
   it("rejects internal flags at the input boundary", async () => {
@@ -208,7 +247,9 @@ describe("organization feature preview defaults", () => {
       // not a registered preview, so it is filtered out rather than surfacing
       // here. Asserting that two REGISTERED defaults resolve differently needs
       // a second preview; add that half back with the next one.
+      externalMediaStorage: false,
       modernSession: false,
+      sessionTimeline: false,
     });
   });
 
@@ -241,6 +282,30 @@ describe("organization feature preview defaults", () => {
 });
 
 describe("organization member feature preview overrides", () => {
+  it("enables Compact Session when enabling Session Timeline for a member", async () => {
+    const { caller, org } = await prepare();
+    const target = await createUser();
+    await prisma.organizationMembership.create({
+      data: { orgId: org.id, userId: target.id, role: Role.MEMBER },
+    });
+
+    await caller.members.setUserFeaturePreviewEnabled({
+      orgId: org.id,
+      userId: target.id,
+      flag: "sessionTimeline",
+      enabled: true,
+    });
+
+    await expect(
+      prisma.user.findUniqueOrThrow({
+        where: { id: target.id },
+        select: { featureFlags: true },
+      }),
+    ).resolves.toEqual({
+      featureFlags: ["sessionTimeline", "modernSession"],
+    });
+  });
+
   it("persists an administrator's disable as a global user opt-out", async () => {
     const { caller, org } = await prepare();
     const target = await createUser({ featureFlags: ["modernSession"] });
@@ -261,7 +326,10 @@ describe("organization member feature preview overrides", () => {
         select: { featureFlags: true },
       }),
     ).resolves.toEqual({
-      featureFlags: [getFeaturePreviewOptOutFlag("modernSession")],
+      featureFlags: [
+        getFeaturePreviewOptOutFlag("modernSession"),
+        getFeaturePreviewOptOutFlag("sessionTimeline"),
+      ],
     });
   });
 
@@ -439,7 +507,11 @@ describe("organization member feature preview overrides", () => {
 
     // The state map surfaces every preview; the raw `featureFlags` array stays
     // hidden, which is what this guards.
-    expect(row?.featurePreviews).toEqual({ modernSession: true });
+    expect(row?.featurePreviews).toEqual({
+      externalMediaStorage: false,
+      modernSession: true,
+      sessionTimeline: false,
+    });
     expect(row?.user).not.toHaveProperty("featureFlags");
     expect(row).not.toHaveProperty("organizationIds");
   });
@@ -519,7 +591,7 @@ async function prepare(
       name: actor.name,
       admin: actorIsPlatformAdmin,
       canCreateOrganizations: true,
-      featureFlags: {} as NonNullable<Session["user"]>["featureFlags"],
+      featureFlags: testFeatureFlags({ templateFlag: false }),
       organizations: [
         {
           id: org.id,

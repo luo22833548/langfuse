@@ -6,6 +6,7 @@ import {
   eventsTableStringFilter,
   eventsTableStringObjectFilter,
   eventsTableCols,
+  coerceLegacyEmptyMetadataFilters,
   filterOperators,
   FTS_MATCH_OPERATOR,
   numberFilter,
@@ -29,7 +30,7 @@ import {
 } from "@/src/features/public-api/server";
 import { defineTool } from "../../../core/define-tool";
 import { runMcpTool } from "../../../core/run-mcp-tool";
-import { clampToDataAccessDays } from "@/src/features/entitlements/server/hasEntitlementLimit";
+import { clampToDataAccessDays } from "@/src/features/entitlements/server";
 import {
   ExpandMetadataKeysSchema,
   getMetadataExpansionForProjection,
@@ -54,6 +55,10 @@ const EXPENSIVE_OBSERVATION_ACCESS_COLUMNS = new Set([
   "output",
   "metadata",
 ]);
+
+const EXPENSIVE_OBSERVATION_MAX_RANGE_MS = 14 * 24 * 60 * 60 * 1000;
+const EXPENSIVE_OBSERVATION_MAX_IO_LIMIT = 50;
+const MCP_OBSERVATIONS_MAX_EXECUTION_TIME_SECONDS = 25;
 
 const OBSERVATION_MCP_FILTER_COLUMN_TYPES = new Map(
   eventsTableCols
@@ -127,11 +132,11 @@ const OBSERVATION_MCP_FILTER_SCHEMA_BY_TYPE = {
       column: z.literal(column),
     }),
   stringObject: (column: string, requireType = false) => {
-    const filterSchema = OBSERVATION_MCP_FTS_COLUMNS.has(column)
+    const filterSchemaBase = OBSERVATION_MCP_FTS_COLUMNS.has(column)
       ? eventsTableStringObjectFilter
       : stringObjectFilter;
 
-    return filterSchema.omit({ type: true, column: true }).extend({
+    return filterSchemaBase.omit({ type: true, column: true }).extend({
       type: requireType
         ? z.literal("stringObject")
         : z.literal("stringObject").optional(),
@@ -245,11 +250,16 @@ const ObservationMcpFilterSchema = z.preprocess(
       const type =
         filter.type ?? OBSERVATION_MCP_FILTER_COLUMN_TYPES.get(filter.column);
 
-      return eventsTableSingleFilter.parse(
+      const reshaped =
         filter.column === "tags"
           ? { ...filter, type, column: "traceTags" }
-          : { ...filter, type },
-      );
+          : { ...filter, type };
+      // Legacy `contains ""` presence spelling → `is set` before validation.
+      const [coerced] = coerceLegacyEmptyMetadataFilters([
+        reshaped,
+      ]) as unknown[];
+
+      return eventsTableSingleFilter.parse(coerced);
     }),
 );
 
@@ -304,23 +314,6 @@ const ListObservationsInputSchema = ListObservationsBaseSchema.extend({
 
 type ListObservationsInput = z.infer<typeof ListObservationsInputSchema>;
 
-const hasObservationIdFilter = (filters: ListObservationsInput["filter"]) =>
-  filters?.some(
-    (filter) =>
-      filter.column === "id" &&
-      filter.type === "stringOptions" &&
-      filter.operator === "any of" &&
-      filter.value.length > 0,
-  ) ?? false;
-
-const hasValidStartTimeBound = (input: ListObservationsInput) => {
-  if (!input.fromStartTime || !input.toStartTime) return false;
-  return (
-    new Date(input.fromStartTime).getTime() <
-    new Date(input.toStartTime).getTime()
-  );
-};
-
 // Initially, we return io/metadata in full only if some limits are set
 const assertAllowedExpensiveObservationAccess = (
   input: ListObservationsInput,
@@ -342,20 +335,33 @@ const assertAllowedExpensiveObservationAccess = (
 
   if (expensiveColumns.size === 0) return;
 
-  const hasSelectiveScope =
-    Boolean(input.traceId) ||
-    hasObservationIdFilter(input.filter) ||
-    hasValidStartTimeBound(input);
+  if (!input.fromStartTime || !input.toStartTime) {
+    throw new InvalidRequestError(
+      `Accessing observation ${Array.from(expensiveColumns)
+        .sort()
+        .join(
+          ", ",
+        )} requires both fromStartTime and toStartTime with a maximum range of 14 days.`,
+    );
+  }
 
-  if (hasSelectiveScope) return;
+  const rangeMs =
+    new Date(input.toStartTime).getTime() -
+    new Date(input.fromStartTime).getTime();
+  if (rangeMs <= 0 || rangeMs > EXPENSIVE_OBSERVATION_MAX_RANGE_MS) {
+    throw new InvalidRequestError(
+      "Accessing observation input, output, or metadata by date requires a maximum range of 14 days.",
+    );
+  }
 
-  throw new InvalidRequestError(
-    `Accessing observation ${Array.from(expensiveColumns)
-      .sort()
-      .join(
-        ", ",
-      )} requires traceId, an id filter, or both fromStartTime and toStartTime.`,
+  const projectsIo = projectionFields.some(
+    (field) => field === "input" || field === "output",
   );
+  if (projectsIo && input.limit > EXPENSIVE_OBSERVATION_MAX_IO_LIMIT) {
+    throw new InvalidRequestError(
+      `Projecting observation input or output by date supports a maximum limit of ${EXPENSIVE_OBSERVATION_MAX_IO_LIMIT}.`,
+    );
+  }
 };
 
 export const [listObservationsTool, handleListObservations] = defineTool({
@@ -364,12 +370,13 @@ export const [listObservationsTool, handleListObservations] = defineTool({
     "Find and review observations in the current Langfuse project, such as generations, spans, events, agent steps, and tool calls.",
     "Traces consist of observations. Use this tool when the user asks to inspect traces: pass traceId to page through the observations for a specific trace; those observation records are the trace data returned by the API.",
     "Use filters to narrow results by trace, name, type, level, environment, time range, or advanced filter conditions. Results are paginated with an opaque cursor.",
-    'For metadata filters, first inspect metadata on selectively scoped observations by passing traceId, an exact id filter, or both fromStartTime and toStartTime with fields: ["id", "metadata"]. Then use a discovered key in a stringObject filter.',
+    'For metadata filters, first inspect metadata by passing both fromStartTime and toStartTime with a maximum range of 14 days and fields: ["id", "metadata"]. Then use a discovered key in a stringObject filter.',
     "",
     'By default this returns compact summary fields. Use fields: ["*"] for the full observation, or pass specific field names to limit the response size.',
     'Important: if you request metadata explicitly, for example fields: ["id", "metadata"], metadata values are truncated to 200 UTF-8 characters per key unless you also pass expandMetadataKeys with the keys that may need full values.',
-    "Requests that project or filter input, output, or metadata must include traceId, an id filter, or both fromStartTime and toStartTime.",
+    "Requests that project or filter input, output, or metadata must include both fromStartTime and toStartTime with a date range of at most 14 days, even when scoped by traceId or observation id. Input/output projections support a maximum limit of 50.",
   ].join("\n"),
+  action: "traces:read",
   baseSchema: ListObservationsBaseSchema,
   inputSchema: ListObservationsInputSchema,
   handler: async (input, context) => {
@@ -414,31 +421,39 @@ export const [listObservationsTool, handleListObservations] = defineTool({
           "mcp.field_groups": fieldGroups.join(","),
         });
 
-        const items = await getObservationsV2FromEventsTableForPublicApi({
-          projectId: context.projectId,
-          page: 0,
-          limit: input.limit,
-          traceId: input.traceId,
-          userId: input.userId,
-          level: input.level,
-          name: input.name,
-          type: input.type,
-          environment: input.environment,
-          parentObservationId: input.parentObservationId,
-          isRootObservation: input.isRootObservation,
-          fromStartTime: dataAccessWindow.effectiveFromTimestamp?.toISOString(),
-          toStartTime: input.toStartTime,
-          version: input.version,
-          advancedFilters,
-          cursor: input.cursor
-            ? EncodedObservationsCursorV2.parse(input.cursor)
-            : undefined,
-          fields: fieldGroups,
-          expandMetadataKeys: getMetadataExpansionForProjection(
-            projectionFields,
-            input.expandMetadataKeys,
-          ),
-        });
+        const items = await getObservationsV2FromEventsTableForPublicApi(
+          {
+            projectId: context.projectId,
+            page: 0,
+            limit: input.limit,
+            traceId: input.traceId,
+            userId: input.userId,
+            level: input.level,
+            name: input.name,
+            type: input.type,
+            environment: input.environment,
+            parentObservationId: input.parentObservationId,
+            isRootObservation: input.isRootObservation,
+            fromStartTime:
+              dataAccessWindow.effectiveFromTimestamp?.toISOString(),
+            toStartTime: input.toStartTime,
+            version: input.version,
+            advancedFilters,
+            cursor: input.cursor
+              ? EncodedObservationsCursorV2.parse(input.cursor)
+              : undefined,
+            fields: fieldGroups,
+            expandMetadataKeys: getMetadataExpansionForProjection(
+              projectionFields,
+              input.expandMetadataKeys,
+            ),
+          },
+          {
+            clickhouseSettings: {
+              max_execution_time: MCP_OBSERVATIONS_MAX_EXECUTION_TIME_SECONDS,
+            },
+          },
+        );
 
         const hasMore = items.length > input.limit;
         const dataToReturn = hasMore ? items.slice(0, input.limit) : items;

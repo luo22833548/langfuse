@@ -5,7 +5,7 @@ import { type ViewVersion } from "@langfuse/shared/query";
 import { type TimeFilter, ObservationLevelDomain } from "@langfuse/shared";
 import { api, type RouterOutputs } from "@/src/utils/api";
 import { Button } from "@/src/components/ui/button";
-import { normalizeSingleValueOptions } from "@/src/features/filters/lib/filter-transform";
+import { normalizeSingleValueOptions } from "@/src/features/filters";
 import { showErrorToast, showSuccessToast } from "@/src/features/notifications";
 import {
   importWidgetFile,
@@ -69,7 +69,7 @@ export const WidgetImporter = ({
         size="sm"
         onClick={() => importInputRef.current?.click()}
       >
-        <Upload className="mr-2 h-4 w-4" />
+        <Upload className="icon-base text-icon-foreground mr-2" />
         Import
       </Button>
     </>
@@ -188,6 +188,7 @@ async function runImport(params: {
     params.onImport(result.snapshot);
 
     showSuccessToast({
+      operation: "widget.import",
       title: "Widget uploaded successfully",
       description: "Widget configuration has been loaded.",
     });

@@ -27,6 +27,10 @@ const STORY_TITLE_GROUPS: StoryTitleGroup[] = [
     titlePrefix: "Design/Components/Table/Cells",
   },
   {
+    directory: "src/features/ai-gateway/components",
+    titlePrefix: "Features/AI Gateway",
+  },
+  {
     directory: "src/features/evals/v2/components",
     titlePrefix: "Features/Evaluations",
   },
@@ -174,6 +178,13 @@ const config: StorybookConfig = {
       {
         find: /^@langfuse\/shared\/query$/,
         replacement: `${sharedSrc}/features/query`,
+      },
+      // Client-safe role catalog, imported by the RBAC role-select UI and its
+      // stories. No `/rbac/server` rule: a story pulling server-only code
+      // should fail the build, not silently resolve.
+      {
+        find: /^@langfuse\/shared\/rbac$/,
+        replacement: `${sharedSrc}/features/rbac`,
       },
       // Client-safe entry of the in-app-agent module (imported by the agent
       // window components and their stories). Deliberately no rule for the

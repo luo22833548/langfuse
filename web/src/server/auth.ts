@@ -1,3 +1,4 @@
+/* eslint-disable no-nested-ternary */
 import { type GetServerSidePropsContext } from "next";
 import {
   getServerSession,
@@ -9,14 +10,17 @@ import { prisma } from "@langfuse/shared/src/db";
 import { isInAppAgentInstanceEnabled } from "@langfuse/shared/in-app-agent/server/modelProvider";
 import {
   hashPassword,
+  passwordRequiresReset,
   verifyPassword,
-} from "@/src/features/auth-credentials/lib/credentialsServerUtils";
+} from "@/src/features/auth-credentials/lib/passwordHash";
 import {
   parseFlags,
   parseFlagsWithOrganizationDefaults,
-} from "@/src/features/feature-flags/utils";
+} from "@/src/features/feature-flags/server";
+import { isGatewayEnabledForOrganization } from "@/src/features/ai-gateway/server/availability";
 import { env } from "@/src/env.mjs";
 import { createProjectMembershipsOnSignup } from "@/src/features/auth/lib/createProjectMembershipsOnSignup";
+import { getSessionLoginAt } from "@/src/features/auth/lib/sessionExpiration";
 import { type AdClickIds } from "@/src/features/auth/lib/signupAttribution";
 import {
   type AdapterUser,
@@ -51,11 +55,18 @@ import {
   findMultiTenantSsoConfig,
   getSsoAuthProviderIdForDomain,
   loadSsoProviders,
-} from "@/src/ee/features/multi-tenant-sso/utils";
+} from "@/src/ee/features/multi-tenant-sso/server";
 import {
   ENTERPRISE_SSO_REQUIRED_MESSAGE,
   MULTI_TENANT_SSO_DOMAIN_MISMATCH_MESSAGE,
+  PASSWORD_RESET_REQUIRED_MESSAGE,
+  TURNSTILE_ACTIONS,
+  TURNSTILE_FAILED_MESSAGE,
 } from "@/src/features/auth/constants";
+import {
+  getTurnstileRemoteIp,
+  verifyTurnstileToken,
+} from "@/src/features/auth/server/verifyTurnstile";
 import { z } from "zod";
 import { CloudConfigSchema, projectRoleAccessRights } from "@langfuse/shared";
 import {
@@ -78,8 +89,8 @@ import { createSupportEmailHash } from "@/src/features/support-chat/createSuppor
 import {
   canToggleV4,
   isV4UpgradeUiAvailable,
-} from "@/src/features/events/lib/v4Rollout";
-import { canCreateOrganizations } from "@/src/features/organizations/server/canCreateOrganizations";
+} from "@/src/features/events/server";
+import { canCreateOrganizations } from "@/src/features/organizations/server";
 
 const staticProviders: Provider[] = [
   CredentialsProvider({
@@ -91,13 +102,21 @@ const staticProviders: Provider[] = [
         placeholder: "jsmith@example.com",
       },
       password: { label: "Password", type: "password" },
+      turnstileToken: { label: "Turnstile token", type: "text" },
     },
-    async authorize(credentials, _req) {
+    async authorize(credentials, req) {
       if (!credentials) throw new Error("No credentials");
       if (env.AUTH_DISABLE_USERNAME_PASSWORD === "true")
         throw new Error(
           "Sign in with email and password is disabled for this instance. Please use SSO.",
         );
+
+      const turnstileValid = await verifyTurnstileToken({
+        token: credentials.turnstileToken,
+        action: TURNSTILE_ACTIONS.login,
+        remoteIp: getTurnstileRemoteIp(req.headers),
+      });
+      if (!turnstileValid) throw new Error(TURNSTILE_FAILED_MESSAGE);
 
       const blockedDomains = getSSOBlockedDomains();
       const domain = credentials.email.split("@")[1]?.toLowerCase();
@@ -121,7 +140,7 @@ const staticProviders: Provider[] = [
       });
 
       if (!dbUser) {
-        // Keep bcrypt work comparable across failed login paths to reduce timing-based user enumeration.
+        // Keep hashing work comparable across failed login paths to reduce timing-based user enumeration.
         await hashPassword(credentials.password);
         throw new Error("Invalid credentials");
       }
@@ -130,6 +149,10 @@ const staticProviders: Provider[] = [
         throw new Error(
           "Please sign in with the identity provider (e.g. Google, GitHub, Azure AD, etc.) that is linked to your account.",
         );
+      }
+
+      if (passwordRequiresReset(dbUser.password)) {
+        throw new Error(PASSWORD_RESET_REQUIRED_MESSAGE);
       }
 
       const isValidPassword = await verifyPassword(
@@ -750,11 +773,28 @@ export async function getAuthOptions(signupAttribution?: {
         }
         return baseUrl;
       },
+      async jwt({ token, user }) {
+        if (user) {
+          const loginAt = await getSessionLoginAt(token.email!);
+          token.loginAt = loginAt.getTime();
+        }
+        return token;
+      },
       async session({ session, token }): Promise<Session> {
         return instrumentAsync({ name: "next-auth-session" }, async (span) => {
           const dbUser = await prisma.user.findUnique({
             where: {
               email: token.email!.toLowerCase(),
+              OR: [
+                { sessionsExpiredAt: null },
+                {
+                  // Strict: a token issued in the same millisecond as revocation
+                  // is treated as revoked.
+                  sessionsExpiredAt: {
+                    lt: new Date(token.loginAt ?? 0),
+                  },
+                },
+              ],
             },
             select: {
               id: true,
@@ -847,6 +887,12 @@ export async function getAuthOptions(signupAttribution?: {
               // If you edit this line, you risk executing code that is not MIT licensed (self-contained in /ee folders otherwise)
               selfHostedInstancePlan: getSelfHostedInstancePlanServerSide(),
               v4WriteMode,
+              apiKeyProjectRoleSelectionEnabled:
+                env.API_AUTH_MIGRATION === "enforce" &&
+                env.API_KEY_PROJECT_ROLES_ENABLE === "true",
+              apiKeyOrgRoleSelectionEnabled:
+                env.API_AUTH_MIGRATION === "enforce" &&
+                env.API_KEY_ORG_ROLES_ENABLE === "true",
             },
             user:
               dbUser !== null
@@ -912,6 +958,9 @@ export async function getAuthOptions(signupAttribution?: {
                             {
                               email: dbUser.email,
                               v4BetaEnabled,
+                              aiGatewayEnabled: isGatewayEnabledForOrganization(
+                                orgMembership.organization.id,
+                              ),
                             },
                           ),
                           cloudConfig: parsedCloudConfig.data,

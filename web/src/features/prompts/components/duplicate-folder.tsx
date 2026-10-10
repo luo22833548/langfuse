@@ -30,7 +30,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import useProjectIdFromURL from "@/src/hooks/useProjectIdFromURL";
 import { Copy } from "lucide-react";
 import { usePostHogClientCapture } from "@/src/features/posthog-analytics";
-import { useEntitlementLimit } from "@/src/features/entitlements/hooks";
+import { useEntitlementLimit } from "@/src/features/entitlements";
 
 enum CopySettings {
   LATEST_ONLY = "latest_only",
@@ -115,7 +115,7 @@ export function DuplicateFolder({ folderPath }: { folderPath: string }) {
           title="Duplicate folder including prompts"
           onClick={() => capture("prompt_detail:duplicate_button_click")}
         >
-          <Copy className="h-4 w-4" />
+          <Copy className="icon-sm text-icon-foreground" />
         </Button>
       </DialogTrigger>
       <DialogContent className="max-h-[90vh] min-h-0 sm:max-w-md">

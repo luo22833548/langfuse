@@ -58,7 +58,7 @@ export const TagInput = React.forwardRef<
                 onClick={allowTagRemoval ? () => removeTag(tag) : undefined}
               >
                 {tag}
-                {allowTagRemoval && <X className="ml-1 h-3 w-3" />}
+                {allowTagRemoval && <X className="icon-base ml-1" />}
               </Button>
             ))}
           </div>
@@ -66,7 +66,7 @@ export const TagInput = React.forwardRef<
         <CommandPrimitive.Input
           ref={ref}
           className={cn(
-            "placeholder:muted-foreground flex h-8 w-full rounded-md border-transparent bg-transparent px-1 text-sm outline-hidden focus:border-0 focus:border-none focus:border-transparent focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50",
+            "placeholder:text-muted-foreground flex h-8 w-full rounded-md border-transparent bg-transparent px-1 text-sm outline-hidden focus:border-0 focus:border-none focus:border-transparent focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50",
             className,
           )}
           autoFocus
